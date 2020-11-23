@@ -32,6 +32,7 @@ def parser():
                         help="path to data file")
     parser.add_argument("--thresh", type=float, default=.25,
                         help="remove detections with lower confidence")
+    parser.add_argument("--path_save", type = str, default = None)
     return parser.parse_args()
 
 
@@ -106,13 +107,13 @@ def image_detection(image_path, network, class_names, class_colors, thresh):
 
     image = cv2.imread(image_path)
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image_resized = cv2.resize(image_rgb, (width, height),
-                               interpolation=cv2.INTER_LINEAR)
+    image_resized = cv2.resize(image_rgb, (width, height), interpolation=cv2.INTER_LINEAR)
 
     darknet.copy_image_from_bytes(darknet_image, image_resized.tobytes())
     detections = darknet.detect_image(network, class_names, darknet_image, thresh=thresh)
     darknet.free_image(darknet_image)
     image = darknet.draw_boxes(detections, image_resized, class_colors)
+    
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB), detections
 
 
@@ -135,20 +136,6 @@ def batch_detection(network, images, class_names, class_colors,
     return images, batch_predictions
 
 
-def image_classification(image, network, class_names):
-    width = darknet.network_width(network)
-    height = darknet.network_height(network)
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image_resized = cv2.resize(image_rgb, (width, height),
-                                interpolation=cv2.INTER_LINEAR)
-    darknet_image = darknet.make_image(width, height, 3)
-    darknet.copy_image_from_bytes(darknet_image, image_resized.tobytes())
-    detections = darknet.predict_image(network, darknet_image)
-    predictions = [(name, detections[idx]) for idx, name in enumerate(class_names)]
-    darknet.free_image(darknet_image)
-    return sorted(predictions, key=lambda x: -x[1])
-
-
 def convert2relative(image, bbox):
     """
     YOLO format use relative coordinates for annotation
@@ -158,16 +145,49 @@ def convert2relative(image, bbox):
     return x/width, y/height, w/width, h/height
 
 
-def save_annotations(name, image, detections, class_names):
+def save_annotations(name, image, detections, class_names, pathSave):
     """
     Files saved with image_name.txt and relative coordinates
     """
+    if (pathSave[-1]!='/' and pathSave != None):
+        pathSave += '/'
+        
     file_name = name.split(".")[:-1][0] + ".txt"
+    if (pathSave != None):
+        file_name = file_name.split('/')[-1]
+        
+        file_name = pathSave + file_name
+        print(file_name)
+    
     with open(file_name, "w") as f:
         for label, confidence, bbox in detections:
             x, y, w, h = convert2relative(image, bbox)
             label = class_names.index(label)
             f.write("{} {:.4f} {:.4f} {:.4f} {:.4f} {:.4f}\n".format(label, x, y, w, h, float(confidence)))
+
+def save_pseudo(name, image, detections, class_names):
+    """
+    Files saved with image_name.txt and relative coordinates
+    """
+    file_name = name.split(".")[:-1][0] + ".txt"
+    
+    file_name = file_name.split('/')[-1]
+    #print(file_name)
+    file_name = "/content/pseudo_2/" + file_name
+    cnt = 0
+    listName = []
+    for label, confidence, bbox in detections:
+      if (float(confidence) < 75.0):
+        continue
+      cnt = cnt + 1
+      x, y, w, h = convert2relative(image, bbox)
+      label = class_names.index(label)
+      listName.append("{} {:.4f} {:.4f} {:.4f} {:.4f}\n".format(label, x, y, w, h))
+    if (cnt > 0):
+      print(file_name)
+      with open(file_name, 'w') as f:
+        for item in listName:
+          f.write(item)
 
 
 def batch_detection_example():
@@ -216,9 +236,10 @@ def main():
         prev_time = time.time()
         image, detections = image_detection(
             image_name, network, class_names, class_colors, args.thresh
-            )
+        )
         if args.save_labels:
-            save_annotations(image_name, image, detections, class_names)
+            save_annotations(image_name, image, detections, class_names, args.path_save)
+            #save_pseudo(image_name, image, detections, class_names)
         darknet.print_detections(detections, args.ext_output)
         fps = int(1/(time.time() - prev_time))
         print("FPS: {}".format(fps))
